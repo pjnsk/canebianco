@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tracciatore di Progresso Multi-Libro con Note</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 20px; }
+        h1, h2 { text-align: center; }
+        #app { max-width: 800px; margin: 0 auto; }
+        input, button, select { margin: 5px 0; padding: 5px; }
+        #bookList, #pageGrid, #notesList, #chapterNotes { margin-top: 20px; }
+        .book-item { background-color: #f4f4f4; padding: 10px; margin-bottom: 5px; }
+        #pageGrid {
+            user-select: none;
+        }
+        .page-square {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            line-height: 30px;
+            text-align: center;
+            border: 1px solid #ccc;
+            margin: 2px;
+            font-size: 12px;
+            cursor: pointer;
+            position: relative;
+        }
+        .page-square .small-square {
+            width: 10px;
+            height: 10px;
+            background-color: transparent;
+            position: absolute;
+            bottom: 0;
+            right: 0;
+        }
+        .color-picker {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .color-picker label {
+            margin-right: 10px;
+        }
+        .selected-for-note {
+            border: 2px solid blue !important;
+        }
+        #noteInput, #chapterNameInput {
+            width: 100%;
+            margin-top: 10px;
+        }
+        .note-item {
+            background-color: #f0f0f0;
+            padding: 10px;
+            margin-bottom: 5px;
+            border-radius: 5px;
+        }
+        .chapter-note-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .chapter-note-color {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            border: 1px solid #ccc;
+        }
+        #confirmPages, #addNote, #confirmPageNoteAssociations, #addChapterNote {
+            display: none;
+        }
+        #eraserButton {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <h1>Tracciatore di Progresso Multi-Libro con Note</h1>
+        <div>
+            <input type="text" id="bookTitle" placeholder="Titolo del libro">
+            <input type="number" id="totalPages" placeholder="Numero totale di pagine">
+            <button onclick="addBook()">Aggiungi Libro</button>
+        </div>
+        <div id="bookList"></div>
+        <hr>
+        <h2>Segna Progresso</h2>
+        <div>
+            <select id="bookSelect" onchange="showProgress()"></select>
+        </div>
+        <div class="color-picker">
+            <label for="highlightColor">Colore evidenziazione:</label>
+            <input type="color" id="highlightColor" value="#4CAF50" onchange="updateHighlightColor()">
+        </div>
+        <div class="color-picker">
+            <label for="baseColor">Colore base:</label>
+            <input type="color" id="baseColor" value="#FFD700">
+        </div>
+        <button id="eraserButton" onclick="activateEraser()">Gomma Little Square</button>
+        <div id="pageGrid"></div>
+        <button id="confirmPages" onclick="confirmSelectedPages()">Conferma Pagine Selezionate</button>
+        <button id="confirmPageNoteAssociations" onclick="updatePageNoteAssociations()">Aggiorna Pagine Nota</button>
+        <textarea id="noteInput" placeholder="Inserisci una nota per le pagine selezionate" rows="3"></textarea>
+        <button id="addNote" onclick="addNote()">Aggiungi Nota</button>
+        <div id="chapterNotes">
+            <h3>Note Capitoli:</h3>
+            <input type="text" id="chapterNameInput" placeholder="Nome del capitolo">
+            <button id="addChapterNote" onclick="addChapterNote()">Aggiungi Nota Capitolo</button>
+            <div id="chapterNotesList"></div>
+        </div>
+        <h3>Note:</h3>
+        <div id="notesList"></div>
+    </div>
+
+    <script>
+        let books = JSON.parse(localStorage.getItem('books')) || [];
+        let isMouseDown = false;
+        let isRightMouseDown = false;
+        let lastToggleState = null;
+        let currentColor = localStorage.getItem('currentColor') || '#4CAF50';
+        let selectedPages = [];
+        let editingNoteIndex = -1;
+        let isEditingPagesForNote = false;
+        let chapterNotes = JSON.parse(localStorage.getItem('chapterNotes')) || [];
+        let eraserMode = false;
+
+        function addBook() {
+            const title = document.getElementById('bookTitle').value;
+            const pages = parseInt(document.getElementById('totalPages').value);
+            if (title && pages > 0) {
+                books.push({ title, pages, progress: {}, littleSquares: {}, currentColor: currentColor, notes: [] });
+                saveBooks();
+                updateBookList();
+                updateBookSelect();
+                clearInputs();
+            } else {
+                alert('Per favore, inserisci un titolo valido e un numero di pagine maggiore di zero.');
+            }
+        }
+
+        function updateBookList() {
+            const bookList = document.getElementById('bookList');
+            bookList.innerHTML = '';
+            books.forEach((book, index) => {
+                const bookItem = document.createElement('div');
+                bookItem.className = 'book-item';
+                bookItem.innerHTML = `
+                    ${book.title} - ${book.pages} pagine
+                    <button onclick="deleteBook(${index})">Elimina</button>
+                `;
+                bookList.appendChild(bookItem);
+            });
+        }
+
+        function updateBookSelect() {
+            const bookSelect = document.getElementById('bookSelect');
+            bookSelect.innerHTML = '<option value="">Seleziona un libro</option>';
+            books.forEach((book, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = book.title;
+                bookSelect.appendChild(option);
+            });
+        }
+
+        function showProgress() {
+            const bookIndex = document.getElementById('bookSelect').value;
+            if (bookIndex !== "") {
+                currentColor = books[bookIndex].currentColor;
+                document.getElementById('highlightColor').value = currentColor;
+            }
+            updatePageGrid(bookIndex);
+            updateNotesList(bookIndex);
+            document.getElementById('confirmPages').style.display = 'none';
+            document.getElementById('addNote').style.display = 'none';
+            document.getElementById('confirmPageNoteAssociations').style.display = 'none';
+        }
+
+        function updatePageGrid(bookIndex) {
+            const pageGrid = document.getElementById('pageGrid');
+            pageGrid.innerHTML = '';
+            if (bookIndex !== "") {
+                const book = books[bookIndex];
+                for (let i = 1; i <= book.pages; i++) {
+                    const pageSquare = document.createElement('div');
+                    pageSquare.className = 'page-square';
+                    pageSquare.textContent = i;
+                    pageSquare.dataset.page = i;
+                    if (book.progress[i]) {
+                        pageSquare.style.backgroundColor = book.progress[i];
+                        pageSquare.style.color = 'white';
+                    }
+
+                    const smallSquare = document.createElement('div');
+                    smallSquare.className = 'small-square';
+                    if (book.littleSquares && book.littleSquares[i]) {
+                        smallSquare.style.backgroundColor = book.littleSquares[i];
+                    }
+                    pageSquare.appendChild(smallSquare);
+
+                    pageSquare.addEventListener('mousedown', handleMouseDown);
+                    pageSquare.addEventListener('mouseover', handleMouseOver);
+                    pageSquare.addEventListener('dblclick', handleDoubleClick);
+                    pageSquare.addEventListener('contextmenu', (e) => e.preventDefault());
+                    pageGrid.appendChild(pageSquare);
+                }
+            }
+        }
+
+        function handleMouseDown(e) {
+            if (e.button === 0) { // Left click
+                isMouseDown = true;
+                if (eraserMode) {
+                    eraseLittleSquare(e.target);
+                } else if (e.shiftKey) {
+                    applyBaseColor(e.target);
+                } else {
+                    togglePage(e.target);
+                }
+            } else if (e.button === 2) { // Right click
+                isRightMouseDown = true;
+                selectPageForNote(e.target);
+            }
+        }
+
+        function handleMouseOver(e) {
+            if (isMouseDown) {
+                if (eraserMode) {
+                    eraseLittleSquare(e.target);
+                } else if (e.shiftKey) {
+                    applyBaseColor(e.target);
+                } else {
+                    togglePage(e.target);
+                }
+            } else if (isRightMouseDown) {
+                selectPageForNote(e.target);
+            }
+        }
+
+        function handleDoubleClick(e) {
+            const pageElement = e.target.closest('.page-square');
+            const bookIndex = document.getElementById('bookSelect').value;
+            const page = parseInt(pageElement.dataset.page);
+            const note = prompt(`Inserisci una nota per la pagina ${page}:`);
+            if (note) {
+                if (!books[bookIndex].notes) {
+                    books[bookIndex].notes = [];
+                }
+                books[bookIndex].notes.push({ startPage: page, endPage: page, note: note });
+                books[bookIndex].notes.sort((a, b) => a.startPage - b.startPage);
+                saveBooks();
+                updateNotesList(bookIndex);
+            }
+        }
+
+        function togglePage(pageElement) {
+            const bookIndex = document.getElementById('bookSelect').value;
+            const page = pageElement.dataset.page;
+            const book = books[bookIndex];
+            const isCompleted = !!book.progress[page];
+
+            if (isCompleted) {
+                delete book.progress[page];
+                pageElement.style.backgroundColor = '';
+                pageElement.style.color = '';
+            } else {
+                book.progress[page] = currentColor;
+                pageElement.style.backgroundColor = currentColor;
+                pageElement.style.color = 'white';
+            }
+
+            saveBooks();
+        }
+
+        function applyBaseColor(pageElement) {
+            const bookIndex = document.getElementById('bookSelect').value;
+            const baseColor = document.getElementById('baseColor').value;
+            const page = pageElement.dataset.page;
+            const smallSquare = pageElement.querySelector('.small-square');
+
+            if (smallSquare.style.backgroundColor === baseColor) {
+                smallSquare.style.backgroundColor = 'transparent';
+                delete books[bookIndex].littleSquares[page];
+            } else {
+                smallSquare.style.backgroundColor = baseColor;
+                if (!books[bookIndex].littleSquares) {
+                    books[bookIndex].littleSquares = {};
+                }
+                books[bookIndex].littleSquares[page] = baseColor;
+            }
+
+            saveBooks();
+        }
+
+        function eraseLittleSquare(pageElement) {
+            const bookIndex = document.getElementById('bookSelect').value;
+            const page = pageElement.dataset.page;
+            const smallSquare = pageElement.querySelector('.small-square');
+            if (smallSquare) {
+                smallSquare.style.backgroundColor = 'transparent';
+                if (books[bookIndex].littleSquares) {
+                    delete books[bookIndex].littleSquares[page];
+                }
+            }
+            saveBooks();
+        }
+
+        function selectPageForNote(pageElement) {
+            pageElement.classList.toggle('selected-for-note');
+            const page = parseInt(pageElement.dataset.page);
+            const index = selectedPages.indexOf(page);
+            if (index > -1) {
+                selectedPages.splice(index, 1);
+            } else {
+                selectedPages.push(page);
+            }
+            if (isEditingPagesForNote) {
+                document.getElementById('confirmPageNoteAssociations').style.display = selectedPages.length > 0 ? 'block' : 'none';
+            } else {
+                document.getElementById('confirmPages').style.display = selectedPages.length > 0 ? 'block' : 'none';
+            }
+        }
+
+        function confirmSelectedPages() {
+            document.getElementById('addNote').style.display = 'block';
+            document.getElementById('confirmPages').style.display = 'none';
+        }
+
+        function addNote() {
+            const bookIndex = document.getElementById('bookSelect').value;
+            if (bookIndex !== "" && selectedPages.length > 0) {
+                const note = document.getElementById('noteInput').value.trim();
+                if (note) {
+                    selectedPages.sort((a, b) => a - b);
+                    const startPage = selectedPages[0];
+                    const endPage = selectedPages[selectedPages.length - 1];
+                    if (editingNoteIndex > -1) {
+                        books[bookIndex].notes[editingNoteIndex] = { startPage, endPage, note };
+                        editingNoteIndex = -1;
+                    } else {
+                        books[bookIndex].notes.push({ startPage, endPage, note });
+                    }
+                    books[bookIndex].notes.sort((a, b) => a.startPage - b.startPage);
+                    saveBooks();
+                    updateNotesList(bookIndex);
+                    clearNoteInput();
+                    deselectAllPages();
+                }
+            }
+        }
+
+        function updateNotesList(bookIndex) {
+            const notesList = document.getElementById('notesList');
+            notesList.innerHTML = '';
+            if (bookIndex !== "") {
+                books[bookIndex].notes.sort((a, b) => a.startPage - b.startPage);
+                books[bookIndex].notes.forEach((noteItem, index) => {
+                    const noteElement = document.createElement('div');
+                    noteElement.className = 'note-item';
+                    noteElement.innerHTML = `
+                        <strong>Pagine ${noteItem.startPage}-${noteItem.endPage}:</strong> ${noteItem.note}
+                        <button onclick="editNote(${bookIndex}, ${index})">Modifica</button>
+                        <button onclick="deleteNote(${bookIndex}, ${index})">Elimina</button>
+                    `;
+                    notesList.appendChild(noteElement);
+                });
+            }
+        }
+
+        function editNote(bookIndex, noteIndex) {
+            const note = books[bookIndex].notes[noteIndex];
+            selectedPages = Array.from({ length: note.endPage - note.startPage + 1 }, (_, i) => i + note.startPage);
+            document.getElementById('noteInput').value = note.note;
+            editingNoteIndex = noteIndex;
+            isEditingPagesForNote = true;
+            document.getElementById('addNote').style.display = 'block';
+            document.getElementById('confirmPageNoteAssociations').style.display = 'none';
+            updatePageGrid(bookIndex);
+            selectedPages.forEach(page => {
+                const pageElement = document.querySelector(`.page-square[data-page="${page}"]`);
+                if (pageElement) {
+                    pageElement.classList.add('selected-for-note');
+                }
+            });
+        }
+
+        function updatePageNoteAssociations() {
+            const bookIndex = document.getElementById('bookSelect').value;
+            if (bookIndex !== "" && selectedPages.length > 0 && editingNoteIndex > -1) {
+                const note = books[bookIndex].notes[editingNoteIndex];
+                selectedPages.sort((a, b) => a - b);
+                note.startPage = selectedPages[0];
+                note.endPage = selectedPages[selectedPages.length - 1];
+                saveBooks();
+                updateNotesList(bookIndex);
+                clearNoteInput();
+                deselectAllPages();
+                isEditingPagesForNote = false;
+                editingNoteIndex = -1;
+            }
+        }
+
+        function deleteNote(bookIndex, noteIndex) {
+            books[bookIndex].notes.splice(noteIndex, 1);
+            saveBooks();
+            updateNotesList(bookIndex);
+        }
+
+        function clearNoteInput() {
+            document.getElementById('noteInput').value = '';
+            document.getElementById('addNote').style.display = 'none';
+        }
+
+        function deselectAllPages() {
+            selectedPages = [];
+            document.querySelectorAll('.page-square').forEach(square => {
+                square.classList.remove('selected-for-note');
+            });
+        }
+
+        document.addEventListener('mouseup', () => {
+            isMouseDown = false;
+            isRightMouseDown = false;
+        });
+
+        function deleteBook(index) {
+            books.splice(index, 1);
+            saveBooks();
+            updateBookList();
+            updateBookSelect();
+            document.getElementById('pageGrid').innerHTML = '';
+            document.getElementById('notesList').innerHTML = '';
+        }
+
+        function updateHighlightColor() {
+            const bookIndex = document.getElementById('bookSelect').value;
+            if (bookIndex !== "") {
+                currentColor = document.getElementById('highlightColor').value;
+                books[bookIndex].currentColor = currentColor;
+                saveBooks();
+            }
+        }
+
+        function addChapterNote() {
+            const chapterName = document.getElementById('chapterNameInput').value.trim();
+            const baseColor = document.getElementById('baseColor').value;
+            if (chapterName) {
+                chapterNotes.push({ chapterName, baseColor });
+                saveChapterNotes();
+                updateChapterNotesList();
+                document.getElementById('chapterNameInput').value = '';
+            }
+        }
+
+        function updateChapterNotesList() {
+            const chapterNotesList = document.getElementById('chapterNotesList');
+            chapterNotesList.innerHTML = '';
+            chapterNotes.forEach(note => {
+                const noteElement = document.createElement('div');
+                noteElement.className = 'chapter-note-item';
+                noteElement.innerHTML = `
+                    <div class="chapter-note-color" style="background-color: ${note.baseColor};"></div>
+                    <span>${note.chapterName}</span>
+                `;
+                chapterNotesList.appendChild(noteElement);
+            });
+        }
+
+        function activateEraser() {
+            eraserMode = !eraserMode;
+            const eraserButton = document.getElementById('eraserButton');
+            if (eraserMode) {
+                eraserButton.style.backgroundColor = 'red';
+            } else {
+                eraserButton.style.backgroundColor = '';
+            }
+        }
+
+        function saveBooks() {
+            localStorage.setItem('books', JSON.stringify(books));
+            localStorage.setItem('currentColor', currentColor);
+        }
+
+        function saveChapterNotes() {
+            localStorage.setItem('chapterNotes', JSON.stringify(chapterNotes));
+        }
+
+        function clearInputs() {
+            document.getElementById('bookTitle').value = '';
+            document.getElementById('totalPages').value = '';
+        }
+
+        document.getElementById('highlightColor').value = currentColor;
+        updateBookList();
+        updateBookSelect();
+        updateChapterNotesList();
+    </script>
+</body>
+</html>
